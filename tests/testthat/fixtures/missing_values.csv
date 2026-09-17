@@ -1,0 +1,9 @@
+Investigator: Test
+Recording Name: Synthetic Missing Values
+
+Well Averages,A1,A2,A3
+Treatment/ID,,,
+Number of Spikes,67,,222
+Mean Firing Rate (Hz),0.001747,,0.005788
+Number of Active Electrodes,1,0,1
+Number of Bursts,0,0,

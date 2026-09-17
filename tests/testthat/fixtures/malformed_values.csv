@@ -1,0 +1,9 @@
+Investigator: Test
+Recording Name: Synthetic Malformed Values
+
+Well Averages,A1,A2,A3
+Treatment/ID,,,
+Number of Spikes,67,1996,222
+Mean Firing Rate (Hz),0.001747,#ERROR!,0.005788
+Number of Active Electrodes,1,1,1
+Number of Bursts,0,71,N/A

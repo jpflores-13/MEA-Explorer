@@ -1,0 +1,11 @@
+Investigator: Test
+Recording Name: Synthetic No Well Averages Section
+
+Treatment Averages,
+Mean Firing Rate (Hz) - Avg,0.2
+Number of Bursts - Avg,12
+
+Measurement,A1_11,A1_12,A2_11
+Number of Spikes,0,0,0
+Mean Firing Rate (Hz),0,0,0
+Number of Bursts,0,0,0

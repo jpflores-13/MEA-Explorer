@@ -1,0 +1,23 @@
+Investigator: Test
+Recording Name: Synthetic Valid Export
+Description:
+
+Maestro Pro Settings,
+   Plate Type,CytoView MEA 12
+
+Treatment Averages,
+Mean Firing Rate (Hz) - Avg,0.2
+Number of Bursts - Avg,12
+
+Well Averages,A1,A2,A3
+Treatment/ID,,,
+Number of Spikes,67,1996,222
+Mean Firing Rate (Hz),0.001747,0.052044,0.005788
+Number of Active Electrodes,1,1,1
+Number of Bursts,0,71,0
+Number of Bursting Electrodes,0,1,0
+
+Measurement,A1_11,A1_12,A2_11
+Number of Spikes,0,0,0
+Mean Firing Rate (Hz),0,0,0
+Number of Bursts,0,0,0
