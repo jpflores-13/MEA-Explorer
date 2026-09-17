@@ -49,6 +49,10 @@ file_input_key <- function(source_file) {
   }, character(1)))
 }
 
+# First color matches the vivid pink/magenta clients recreate in Prism;
+# later colors stay clearly distinct for additional conditions.
+CONDITION_PALETTE <- c("#E6299B", "#111111", "#0B6E63", "#E69F00", "#3C79B5", "#7B4EA3")
+
 ui <- page_sidebar(
   title = "MEA Explorer — Upload",
   theme = theme,
@@ -59,11 +63,21 @@ ui <- page_sidebar(
       multiple = TRUE, accept = ".csv",
       buttonLabel = "Browse", placeholder = "No files selected"
     ),
+    p(
+      class = "text-muted small mb-1",
+      "Browsing again adds more files rather than replacing your selection."
+    ),
+    uiOutput("file_list"),
     radioButtons("metric", "Measurement", choices = METRIC_CHOICES),
-    selectizeInput(
-      "wells", "Wells", choices = character(0), multiple = TRUE,
-      options = list(placeholder = "Upload files to choose wells")
-    )
+    div(
+      class = "d-flex justify-content-between align-items-center",
+      tags$label("Wells", class = "control-label", `for` = "wells"),
+      div(
+        actionLink("wells_select_all", "Select all", class = "small me-2"),
+        actionLink("wells_select_none", "Clear", class = "small")
+      )
+    ),
+    checkboxGroupInput("wells", NULL, choices = character(0), inline = TRUE)
   ),
   uiOutput("errors"),
   navset_tab(
@@ -88,9 +102,10 @@ ui <- page_sidebar(
       "Time course",
       p(
         class = "text-muted mt-2",
-        "Timepoint (days in culture) is pre-filled from each file's Recording Name when MEA Explorer recognizes a day marker (e.g. \"d40\") — check it and correct it if it's wrong. Notes are free text for anything worth remembering about that run (e.g. \"media change\", \"possible contamination\")."
+        "Condition and timepoint (days in culture) are pre-filled from each file's Recording Name (e.g. \"KOLF EGC BUMP d40\" → condition \"KOLF EGC BUMP\", day 40) — check them and correct if wrong. Notes are free text for anything worth remembering about that run."
       ),
       uiOutput("metadata_inputs"),
+      uiOutput("condition_filter"),
       uiOutput("timecourse_caption"),
       plotOutput("timecourse_plot", height = "360px"),
       layout_columns(
@@ -109,16 +124,71 @@ ui <- page_sidebar(
 )
 
 server <- function(input, output, session) {
+  # A native <input type=file> replaces its whole selection every time the
+  # researcher browses again, so the working file set is tracked here
+  # instead: each new browse action is merged in (a re-picked name replaces
+  # its old entry), and individual files can be removed without redoing
+  # the OS file picker for the rest.
+  uploaded_files <- reactiveVal(tibble::tibble(
+    name = character(0), datapath = character(0)
+  ))
+
+  observeEvent(input$files, {
+    new_files <- tibble::as_tibble(input$files[, c("name", "datapath")])
+    kept <- dplyr::filter(uploaded_files(), !name %in% new_files$name)
+    uploaded_files(dplyr::bind_rows(kept, new_files))
+  })
+
+  observeEvent(input$remove_file, {
+    uploaded_files(dplyr::filter(uploaded_files(), name != input$remove_file))
+  })
+
+  output$file_list <- renderUI({
+    files <- uploaded_files()
+    if (nrow(files) == 0) return(NULL)
+
+    tagList(
+      p(class = "small text-muted mb-1", sprintf(
+        "%d file%s included:", nrow(files), if (nrow(files) == 1) "" else "s"
+      )),
+      tags$ul(
+        class = "list-unstyled small mb-2",
+        lapply(sort(files$name), function(name) {
+          tags$li(
+            class = "d-flex justify-content-between align-items-center",
+            tags$span(class = "text-truncate", title = name, name),
+            tags$a(
+              href = "#", class = "text-danger ms-2 text-decoration-none",
+              title = "Remove this file", `data-name` = name,
+              onclick = "Shiny.setInputValue('remove_file', this.getAttribute('data-name'), {priority: 'event'}); return false;",
+              "✕"
+            )
+          )
+        })
+      )
+    )
+  })
+
   parsed <- reactive({
-    req(input$files)
-    read_axion_mea_report(input$files$datapath, input$files$name)
+    req(nrow(uploaded_files()) > 0)
+    read_axion_mea_report(uploaded_files()$datapath, uploaded_files()$name)
   })
 
   observeEvent(parsed(), {
     wells <- sort(unique(parsed()$data$well))
     selected <- intersect(isolate(input$wells), wells)
     if (length(selected) == 0) selected <- wells
-    updateSelectizeInput(session, "wells", choices = wells, selected = selected)
+    updateCheckboxGroupInput(session, "wells", choices = wells, selected = selected, inline = TRUE)
+  })
+
+  observeEvent(input$wells_select_all, {
+    wells <- sort(unique(parsed()$data$well))
+    updateCheckboxGroupInput(session, "wells", choices = wells, selected = wells, inline = TRUE)
+  })
+
+  observeEvent(input$wells_select_none, {
+    wells <- sort(unique(parsed()$data$well))
+    updateCheckboxGroupInput(session, "wells", choices = wells, selected = character(0), inline = TRUE)
   })
 
   filtered <- reactive({
@@ -131,7 +201,7 @@ server <- function(input, output, session) {
   })
 
   output$errors <- renderUI({
-    req(input$files)
+    req(nrow(uploaded_files()) > 0)
     errors <- parsed()$errors
     if (nrow(errors) == 0) return(NULL)
 
@@ -139,8 +209,8 @@ server <- function(input, output, session) {
       class = "alert alert-warning",
       tags$strong(sprintf(
         "%d of %d file%s could not be parsed:",
-        nrow(errors), nrow(input$files),
-        if (nrow(input$files) == 1) "" else "s"
+        nrow(errors), nrow(uploaded_files()),
+        if (nrow(uploaded_files()) == 1) "" else "s"
       )),
       tags$ul(
         lapply(seq_len(nrow(errors)), function(i) {
@@ -151,7 +221,7 @@ server <- function(input, output, session) {
   })
 
   output$caption <- renderUI({
-    req(input$files)
+    req(nrow(uploaded_files()) > 0)
     if (nrow(parsed()$data) == 0) {
       return(p(class = "text-muted", "No wells were parsed from the uploaded file(s)."))
     }
@@ -170,7 +240,7 @@ server <- function(input, output, session) {
 
   output$table <- renderTable(
     {
-      req(input$files)
+      req(nrow(uploaded_files()) > 0)
       out <- filtered()
       names(out) <- c("Source file", "Well", names(METRIC_CHOICES)[METRIC_CHOICES == input$metric])
       out
@@ -248,17 +318,20 @@ server <- function(input, output, session) {
     # header (never from the upload filename) — see
     # infer_timepoint_days()/CLAUDE.md's "Longitudinal data model".
     ok_files <- unique(parsed()$data$source_file)
-    files_df <- input$files[input$files$name %in% ok_files, , drop = FALSE]
+    files_df <- uploaded_files()[uploaded_files()$name %in% ok_files, , drop = FALSE]
     files_df <- files_df[order(files_df$name), ]
 
     tagList(lapply(seq_len(nrow(files_df)), function(i) {
       f <- files_df$name[[i]]
       key <- file_input_key(f)
-      inferred_day <- infer_timepoint_days(read_recording_name(files_df$datapath[[i]]))
+      recording_name <- read_recording_name(files_df$datapath[[i]])
+      inferred_day <- infer_timepoint_days(recording_name)
+      inferred_condition <- infer_condition_label(recording_name)
+      if (is.na(inferred_condition)) inferred_condition <- ""
       layout_columns(
         col_widths = c(3, 2, 2, 5),
         div(class = "text-truncate pt-2", title = f, f),
-        textInput(paste0("treatment_", key), NULL, placeholder = "Condition (optional)"),
+        textInput(paste0("treatment_", key), NULL, value = inferred_condition, placeholder = "Condition (optional)"),
         numericInput(paste0("timepoint_", key), NULL, value = inferred_day),
         textInput(paste0("notes_", key), NULL, placeholder = "Notes (optional)")
       )
@@ -285,14 +358,60 @@ server <- function(input, output, session) {
     apply_metadata(data, scaffold)
   })
 
+  # Distinct conditions currently present, for the "which data" filter
+  # below. Rows with a blank/unassigned condition are always kept in
+  # timecourse_data() regardless of this filter, since there's no
+  # checkbox representing "unlabeled" — never silently drop them.
+  available_conditions <- reactive({
+    conditions <- data_with_metadata()$treatment
+    sort(unique(conditions[!is.na(conditions) & nzchar(conditions)]))
+  })
+
+  output$condition_filter <- renderUI({
+    conditions <- available_conditions()
+    if (length(conditions) < 2) return(NULL)
+
+    selected <- intersect(isolate(input$conditions), conditions)
+    if (length(selected) == 0) selected <- conditions
+
+    tagList(
+      div(
+        class = "d-flex justify-content-between align-items-center mt-1",
+        tags$label("Include conditions", class = "control-label mb-0", `for` = "conditions"),
+        div(
+          actionLink("conditions_select_all", "Select all", class = "small me-2"),
+          actionLink("conditions_select_none", "Clear", class = "small")
+        )
+      ),
+      checkboxGroupInput("conditions", NULL, choices = conditions, selected = selected, inline = TRUE)
+    )
+  })
+
+  observeEvent(input$conditions_select_all, {
+    conditions <- available_conditions()
+    updateCheckboxGroupInput(session, "conditions", choices = conditions, selected = conditions, inline = TRUE)
+  })
+
+  observeEvent(input$conditions_select_none, {
+    conditions <- available_conditions()
+    updateCheckboxGroupInput(session, "conditions", choices = conditions, selected = character(0), inline = TRUE)
+  })
+
   timecourse_data <- reactive({
     data <- data_with_metadata()
     req(input$wells)
-    dplyr::filter(data, well %in% input$wells)
+    data <- dplyr::filter(data, well %in% input$wells)
+
+    conditions <- available_conditions()
+    if (length(conditions) >= 2) {
+      req(input$conditions)
+      data <- dplyr::filter(data, is.na(treatment) | treatment %in% input$conditions)
+    }
+    data
   })
 
   has_timepoint <- reactive({
-    req(input$files)
+    req(nrow(uploaded_files()) > 0)
     any(!is.na(timecourse_data()$timepoint))
   })
 
@@ -301,7 +420,7 @@ server <- function(input, output, session) {
   })
 
   output$timecourse_caption <- renderUI({
-    req(input$files)
+    req(nrow(uploaded_files()) > 0)
     if (!has_timepoint()) {
       return(p(class = "text-muted", "Assign a timepoint (days) to at least one file above to see the time course."))
     }
@@ -321,12 +440,26 @@ server <- function(input, output, session) {
     req(has_timepoint())
     metric_label <- names(METRIC_CHOICES)[METRIC_CHOICES == input$metric]
 
-    plot_time_course_summary(
+    p <- plot_time_course_summary(
       timecourse_data(), input$metric,
       group = if (has_group()) "treatment" else NULL
     ) +
-      ggplot2::labs(x = "Days in culture", y = metric_label, color = "Condition") +
-      ggplot2::theme_minimal(base_size = 13)
+      ggplot2::labs(
+        title = paste("Avg", metric_label), x = "Days in culture",
+        y = metric_label, color = "Condition"
+      ) +
+      ggplot2::theme_minimal(base_size = 14) +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(face = "bold"),
+        axis.title = ggplot2::element_text(face = "bold"),
+        axis.text = ggplot2::element_text(face = "bold"),
+        legend.title = ggplot2::element_text(face = "bold")
+      )
+
+    if (has_group()) {
+      p <- p + ggplot2::scale_color_manual(values = CONDITION_PALETTE)
+    }
+    p
   })
 
   output$timecourse_plot <- renderPlot({

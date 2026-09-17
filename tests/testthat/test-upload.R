@@ -101,6 +101,28 @@ test_that("infer_timepoint_days does not match a 'd<digits>' substring embedded 
   expect_true(is.na(infer_timepoint_days("KOLF EGC Grid42 test")))
 })
 
+test_that("infer_condition_label strips the leading date and trailing day marker from real recording names", {
+  expect_equal(infer_condition_label("20260409 KOLF EGC D12 "), "KOLF EGC")
+  expect_equal(infer_condition_label("20260411 KOLF EGC BUMP D16"), "KOLF EGC BUMP")
+  expect_equal(infer_condition_label("20260505 KOLF EGC BUMP d40"), "KOLF EGC BUMP")
+})
+
+test_that("infer_condition_label is tolerant of token order varying between files", {
+  # Real files are inconsistent about token order ("KOLF EGC BUMP" vs
+  # "KOLF BUMP EGC") — this function doesn't try to reorder or validate
+  # against a vocabulary, it just returns whatever's left verbatim.
+  expect_equal(infer_condition_label("20260412 KOLF BUMP EGC D17"), "KOLF BUMP EGC")
+})
+
+test_that("infer_condition_label returns NA when nothing is left after stripping date/day", {
+  expect_true(is.na(infer_condition_label("20260409 D12")))
+  expect_true(is.na(infer_condition_label(NA_character_)))
+})
+
+test_that("infer_condition_label leaves a recording name with no leading date untouched", {
+  expect_equal(infer_condition_label("Synthetic Valid Export"), "Synthetic Valid Export")
+})
+
 test_that("mismatched paths and display_names raises an informative error", {
   expect_error(
     read_axion_mea_report(

@@ -209,14 +209,24 @@ plot_time_course_summary <- function(data, metric, group = NULL) {
     ggplot2::aes(x = timepoint, y = mean)
   }
 
+  # Cap width scales with the timepoint range so error bars read as
+  # distinct T-shaped whiskers rather than bare vertical lines, at any
+  # span of days; falls back to a fixed width when there's only one
+  # timepoint (range 0).
+  timepoint_range <- diff(range(summary_data$timepoint, na.rm = TRUE))
+  errorbar_width <- if (is.na(timepoint_range) || timepoint_range == 0) 0.6 else timepoint_range * 0.015
+
   ggplot2::ggplot() +
     ggplot2::geom_point(
       data = plot_data, mapping = point_aes,
       alpha = 0.25, size = 1.5,
       position = ggplot2::position_jitter(width = 0.3, height = 0)
     ) +
-    ggplot2::geom_errorbar(data = summary_data, mapping = errorbar_aes, width = 0) +
-    ggplot2::geom_line(data = summary_data, mapping = line_aes) +
+    ggplot2::geom_errorbar(
+      data = summary_data, mapping = errorbar_aes,
+      width = errorbar_width, linewidth = 0.6
+    ) +
+    ggplot2::geom_line(data = summary_data, mapping = line_aes, linewidth = 0.8) +
     ggplot2::geom_point(data = summary_data, mapping = mean_point_aes, size = 2.5)
 }
 

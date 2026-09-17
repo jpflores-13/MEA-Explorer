@@ -125,3 +125,33 @@ infer_timepoint_days <- function(recording_name) {
   digits <- regmatches(last_match, regexpr("[0-9]+", last_match))
   as.integer(digits)
 }
+
+#' Infer a condition/group label from a recording name, if present
+#'
+#' Axion recording names in practice follow `<date> <tokens...> <day
+#' marker>` (e.g. "20260505 KOLF EGC BUMP d40"), where `<tokens...>` — a
+#' genotype, cell type, protocol, etc. — is NOT always in a fixed order
+#' (a real dataset had both "KOLF EGC BUMP" and "KOLF BUMP EGC") and isn't
+#' drawn from a known closed vocabulary. Rather than guess at parsing
+#' those tokens individually, this strips the leading date and the
+#' trailing day marker (the same token [infer_timepoint_days()] finds)
+#' and returns whatever remains, whitespace-normalized, as a single
+#' label. Read from the file's own `Recording Name` header field, never
+#' the upload filename. Intended only to pre-fill an editable Condition
+#' field in the Upload UI — always shown and overridable, never applied
+#' silently — see CLAUDE.md's "Longitudinal data model" section.
+#'
+#' @param recording_name A recording name string, e.g. from
+#'   [read_recording_name()]. `NA` returns `NA`.
+#' @return A single character label, or `NA` if nothing recognizable
+#'   remains after stripping the date/day tokens.
+#' @export
+infer_condition_label <- function(recording_name) {
+  if (is.na(recording_name)) return(NA_character_)
+
+  x <- sub("^\\s*[0-9]{6,8}\\s*", "", recording_name)
+  x <- sub("(?<![A-Za-z0-9])[Dd](?:ay)?[ _]?[0-9]{1,4}\\s*$", "", x, perl = TRUE)
+  x <- gsub("\\s+", " ", trimws(x))
+
+  if (!nzchar(x)) NA_character_ else x
+}
