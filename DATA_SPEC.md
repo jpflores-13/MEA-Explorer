@@ -95,20 +95,24 @@ separate, explicit, user-driven step:
 
 - `initialize_metadata(data)` returns a scaffold — one row per unique
   `(source_file, well)` pair, with `experiment_id`, `treatment`,
-  `timepoint`, and `biological_replicate` all `NA`. This is what a
-  plate-mapper UI (or a manually edited table) starts from.
+  `timepoint`, `biological_replicate`, and `notes` all `NA`. This is what
+  a plate-mapper UI (or a manually edited table) starts from.
 - `apply_metadata(data, metadata)` left-joins that table onto the parsed
   data by `(source_file, well)`. Unassigned wells stay `NA` — nothing is
   inferred or defaulted. It errors (rather than guessing) on: duplicate
   metadata rows for the same well, metadata referencing a well that
   doesn't exist in `data`, and re-applying to data that already carries
   metadata columns (to avoid silently stacking joins).
+- `notes` is free text (e.g. "media change day 20", "possible
+  contamination") — unlike the other metadata columns it's never grouped,
+  summarized, or plotted on. It exists purely for a researcher to record
+  and later read back.
 
 Canonical extended output column order:
 
 ```
 source_file, experiment_id, well, treatment, timepoint,
-biological_replicate, mean_firing_rate_hz, number_of_bursts
+biological_replicate, notes, mean_firing_rate_hz, number_of_bursts
 ```
 
 ## Explicit non-goals of v0.1

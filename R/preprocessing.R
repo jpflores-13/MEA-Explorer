@@ -2,14 +2,19 @@
 #
 # The raw Axion Treatment/ID row is frequently blank in practice, so MEA
 # Explorer lets researchers assign experimental metadata (experiment_id,
-# treatment, timepoint, biological_replicate) to wells *after* import,
-# rather than trying to infer it from the source file. This is
+# treatment, timepoint, biological_replicate, notes) to wells *after*
+# import, rather than trying to infer it from the source file. This is
 # deliberately a plain data operation: build a `metadata` tibble keyed by
 # (source_file, well) and apply it with `apply_metadata()`. A Shiny
 # plate-mapper is just a UI for building that table — it should not need
 # to duplicate any of this logic.
+#
+# `notes` is free text (e.g. "media change day 20", "possible
+# contamination") — unlike the other metadata columns it's never grouped,
+# summarized, or plotted on; it exists purely for a researcher to record
+# and later read back.
 
-METADATA_COLUMNS <- c("experiment_id", "treatment", "timepoint", "biological_replicate")
+METADATA_COLUMNS <- c("experiment_id", "treatment", "timepoint", "biological_replicate", "notes")
 
 #' Build an empty metadata scaffold for a parsed MEA dataset
 #'
@@ -20,7 +25,7 @@ METADATA_COLUMNS <- c("experiment_id", "treatment", "timepoint", "biological_rep
 #' @param data Tidy data as returned by [read_axion_well_averages()] /
 #'   [read_axion_mea()]. Must have `source_file` and `well` columns.
 #' @return A tibble: source_file, well, experiment_id, treatment,
-#'   timepoint, biological_replicate (all metadata columns `NA`).
+#'   timepoint, biological_replicate, notes (all metadata columns `NA`).
 #' @export
 initialize_metadata <- function(data) {
   require_columns(data, c("source_file", "well"), context = "data")
@@ -43,18 +48,18 @@ initialize_metadata <- function(data) {
 #'
 #' @param data Tidy data as returned by [read_axion_mea()]. Must not
 #'   already contain metadata columns (`experiment_id`, `treatment`,
-#'   `timepoint`, `biological_replicate`) — apply metadata once, to
-#'   freshly parsed data. To revise an assignment, edit the `metadata`
+#'   `timepoint`, `biological_replicate`, `notes`) — apply metadata once,
+#'   to freshly parsed data. To revise an assignment, edit the `metadata`
 #'   table (the source of truth) and re-apply it to the original parsed
 #'   data, rather than joining on top of an already-joined result.
 #' @param metadata A tibble with `source_file`, `well`, and any subset of
-#'   `experiment_id`, `treatment`, `timepoint`, `biological_replicate`.
-#'   Missing metadata columns are added as `NA`. At most one row per
-#'   (source_file, well) pair.
+#'   `experiment_id`, `treatment`, `timepoint`, `biological_replicate`,
+#'   `notes`. Missing metadata columns are added as `NA`. At most one row
+#'   per (source_file, well) pair.
 #' @return `data` with metadata columns joined in, in canonical column
 #'   order: source_file, experiment_id, well, treatment, timepoint,
-#'   biological_replicate, followed by whatever measurement columns were
-#'   already in `data` (e.g. mean_firing_rate_hz, number_of_bursts).
+#'   biological_replicate, notes, followed by whatever measurement columns
+#'   were already in `data` (e.g. mean_firing_rate_hz, number_of_bursts).
 #' @export
 apply_metadata <- function(data, metadata) {
   require_columns(data, c("source_file", "well"), context = "data")
@@ -114,7 +119,7 @@ apply_metadata <- function(data, metadata) {
   dplyr::select(
     joined,
     "source_file", "experiment_id", "well", "treatment", "timepoint",
-    "biological_replicate",
+    "biological_replicate", "notes",
     dplyr::all_of(measurement_columns)
   )
 }

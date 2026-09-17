@@ -58,12 +58,55 @@ Keep the analytical engine (`R/`) callable and testable without Shiny:
 
 ```r
 data <- read_axion_mea(paths)
-summary_data <- summarize_mea(data, metric = "mean_firing_rate_hz")  # future
+summary_data <- summarize_mea(data, metric = "mean_firing_rate_hz")
 ```
 
 Shiny code should call into `R/` functions rather than compute inside
 `render*()` blocks. Reactives should hold the *result* of an `R/`
 function call, and render functions should only format/plot that result.
+
+## Longitudinal data model (Time course tab)
+
+MEA recordings in this project are longitudinal: the same plate/wells are
+recorded repeatedly over many days, and Axion exports one file per
+recording session. So **one uploaded file = one recording day for the
+whole plate** — timepoint (days in culture) is therefore assigned per
+*file*, via `R/preprocessing.R`'s `initialize_metadata()`/
+`apply_metadata()`, never inferred from the filename even when the
+filename encodes it (e.g. `..._d40.csv`).
+
+Experimental group/condition (e.g. "ASD" vs "Control") is, for now, also
+assigned per file, using the same `treatment` metadata column. **This is
+only correct when each condition is recorded as its own set of files/
+plates.** A single file/plate that mixes conditions across different
+wells needs a real per-well Plate Map (the design handbook's Plate Map
+stage, not built yet) — per-file assignment would incorrectly label every
+well in that file with the same condition. Don't extend the per-file
+shortcut to that case; build proper per-well assignment instead when it's
+needed.
+
+## Summary (mean ± SEM) plots are an intentional, scoped exception
+
+The "never a bar/summary-only plot" rule still holds for well-level and
+group-comparison plots (`plot_well_values()`, `plot_group_distribution()`,
+`plot_replicate_structure()`, `plot_time_course()`). But
+`plot_time_course_summary()` (`R/plotting.R`) deliberately draws a mean ±
+SEM curve per group over time — the standard longitudinal-MEA figure
+(what a researcher would recreate in GraphPad Prism) — because clients
+specifically need that shape for publication figures. It stays compliant
+with the transparency principle a different way: every individual
+well-level observation the error bar summarizes is *still* plotted
+underneath, as small semi-transparent points, so the spread stays
+checkable against the raw data. Don't drop those points to get a cleaner
+match to a reference figure; if an exact match (no points) is ever
+wanted, that's a product decision to make explicitly, not a default.
+
+`R/export.R`'s `pivot_wide_for_prism()` reshapes tidy data into the wide,
+one-row-per-timepoint / one-column-per-well layout Prism's grouped XY
+tables expect, for direct copy-paste import. This is a display/export
+concern only — it never changes what `read_axion_mea()` /
+`summarize_mea()` compute, and a missing (well, timepoint) combination
+stays `NA`, never dropped or zero-filled.
 
 ## Testing
 

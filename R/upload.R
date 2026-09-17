@@ -74,3 +74,54 @@ read_axion_mea_report <- function(paths, display_names = basename(paths)) {
     errors = if (length(failed) > 0) dplyr::bind_rows(failed) else empty_errors
   )
 }
+
+#' Read the "Recording Name" field from an Axion/AxIS CSV export's header
+#'
+#' @param path Path to an Axion/AxIS CSV export.
+#' @return A trimmed character string, or `NA` if the file doesn't exist or
+#'   has no `Recording Name` line in its first few header lines.
+#' @export
+read_recording_name <- function(path) {
+  if (!file.exists(path)) return(NA_character_)
+
+  lines <- readr::read_lines(path, n_max = 10)
+  match_row <- which(startsWith(trimws(lines), "Recording Name"))
+  if (length(match_row) == 0) return(NA_character_)
+
+  line <- lines[[match_row[[1]]]]
+  colon <- regexpr(":", line, fixed = TRUE)
+  if (colon == -1) return(NA_character_)
+
+  value <- trimws(substr(line, colon + 1, nchar(line)))
+  if (!nzchar(value)) NA_character_ else value
+}
+
+#' Infer a days-in-culture timepoint from a recording name, if present
+#'
+#' Looks for a trailing "d40" / "D18" / "day 12"-style token in the
+#' recording name — read from the file's own `Recording Name` header
+#' field, never from the upload filename (MEA Explorer never infers
+#' experimental relationships from filenames). Intended only to pre-fill
+#' an editable timepoint field in the Upload UI: the inferred value is
+#' always shown to the researcher and can be overridden, never applied
+#' silently — see CLAUDE.md's "Longitudinal data model" section.
+#'
+#' @param recording_name A recording name string, e.g. from
+#'   [read_recording_name()]. `NA` returns `NA`.
+#' @return A single integer (days), or `NA` if no recognizable pattern is
+#'   found.
+#' @export
+infer_timepoint_days <- function(recording_name) {
+  if (is.na(recording_name)) return(NA_integer_)
+
+  matches <- regmatches(
+    recording_name,
+    gregexpr("(?<![A-Za-z0-9])[Dd](?:ay)?[ _]?([0-9]{1,4})(?![0-9])", recording_name, perl = TRUE)
+  )[[1]]
+
+  if (length(matches) == 0) return(NA_integer_)
+
+  last_match <- matches[[length(matches)]]
+  digits <- regmatches(last_match, regexpr("[0-9]+", last_match))
+  as.integer(digits)
+}

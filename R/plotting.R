@@ -138,6 +138,88 @@ plot_time_course <- function(data, metric, group = NULL, replicate_col = NULL) {
     ggplot2::geom_point()
 }
 
+#' Plot a mean +/- SEM time course, with individual wells shown underneath
+#'
+#' Summarizes `metric` by (`timepoint`, `group`) with [summarize_mea()] and
+#' draws one line per group connecting the per-timepoint mean, with SEM
+#' error bars — the standard longitudinal-MEA figure (e.g. for GraphPad
+#' Prism). Per the project rule against summary-only plots, every
+#' well-level observation the error bar summarizes is still plotted
+#' underneath, as small semi-transparent points, so the spread stays
+#' checkable against the raw data.
+#'
+#' @param data Tidy MEA data with a `timepoint` column that has at least
+#'   one assigned (non-`NA`) value, and (if `group` is given) that column.
+#' @param metric Name of the measurement column to plot.
+#' @param group Optional name of a column to group/color by, e.g.
+#'   "treatment" (e.g. "ASD" vs "Control"). When `NULL`, all rows are
+#'   treated as a single group/series.
+#' @return A ggplot object.
+#' @export
+plot_time_course_summary <- function(data, metric, group = NULL) {
+  required <- c("timepoint", metric)
+  if (!is.null(group)) required <- c(required, group)
+  require_columns(data, required, context = "data")
+
+  plot_data <- data
+  plot_data$timepoint <- suppressWarnings(as.numeric(plot_data$timepoint))
+
+  newly_na <- is.na(plot_data$timepoint) & !is.na(data$timepoint)
+  if (any(newly_na)) {
+    stop(mea_condition(
+      sprintf(
+        "MEA Explorer could not interpret timepoint value(s) %s as numbers (days).",
+        paste(sprintf("'%s'", unique(data$timepoint[newly_na])), collapse = ", ")
+      ),
+      "invalid_timepoint"
+    ))
+  }
+
+  if (!any(!is.na(plot_data$timepoint))) {
+    stop(mea_condition(
+      "MEA Explorer could not plot a time course because no timepoint metadata has been assigned yet.",
+      "missing_timepoint"
+    ))
+  }
+
+  plot_data <- plot_data[!is.na(plot_data$timepoint), , drop = FALSE]
+
+  group_cols <- c("timepoint", if (!is.null(group)) group)
+  summary_data <- summarize_mea(plot_data, metric, group_cols = group_cols)
+  summary_data <- summary_data[!is.na(summary_data$mean), , drop = FALSE]
+
+  point_aes <- if (!is.null(group)) {
+    ggplot2::aes(x = timepoint, y = .data[[metric]], color = .data[[group]])
+  } else {
+    ggplot2::aes(x = timepoint, y = .data[[metric]])
+  }
+  line_aes <- if (!is.null(group)) {
+    ggplot2::aes(x = timepoint, y = mean, color = .data[[group]], group = .data[[group]])
+  } else {
+    ggplot2::aes(x = timepoint, y = mean, group = 1)
+  }
+  errorbar_aes <- if (!is.null(group)) {
+    ggplot2::aes(x = timepoint, ymin = mean - sem, ymax = mean + sem, color = .data[[group]])
+  } else {
+    ggplot2::aes(x = timepoint, ymin = mean - sem, ymax = mean + sem)
+  }
+  mean_point_aes <- if (!is.null(group)) {
+    ggplot2::aes(x = timepoint, y = mean, color = .data[[group]])
+  } else {
+    ggplot2::aes(x = timepoint, y = mean)
+  }
+
+  ggplot2::ggplot() +
+    ggplot2::geom_point(
+      data = plot_data, mapping = point_aes,
+      alpha = 0.25, size = 1.5,
+      position = ggplot2::position_jitter(width = 0.3, height = 0)
+    ) +
+    ggplot2::geom_errorbar(data = summary_data, mapping = errorbar_aes, width = 0) +
+    ggplot2::geom_line(data = summary_data, mapping = line_aes) +
+    ggplot2::geom_point(data = summary_data, mapping = mean_point_aes, size = 2.5)
+}
+
 #' Plot a per-well heatmap of a metric across the plate layout
 #'
 #' Requires exactly one row per well; MEA Explorer never silently averages

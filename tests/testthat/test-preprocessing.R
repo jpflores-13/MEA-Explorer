@@ -11,12 +11,13 @@ test_that("initialize_metadata scaffolds one NA row per well, nothing guessed", 
   expect_equal(nrow(scaffold), 4)
   expect_equal(colnames(scaffold), c(
     "source_file", "well", "experiment_id", "treatment", "timepoint",
-    "biological_replicate"
+    "biological_replicate", "notes"
   ))
   expect_true(all(is.na(scaffold$experiment_id)))
   expect_true(all(is.na(scaffold$treatment)))
   expect_true(all(is.na(scaffold$timepoint)))
   expect_true(all(is.na(scaffold$biological_replicate)))
+  expect_true(all(is.na(scaffold$notes)))
 })
 
 test_that("applying an all-NA scaffold leaves measurements untouched", {
@@ -24,11 +25,27 @@ test_that("applying an all-NA scaffold leaves measurements untouched", {
 
   expect_equal(colnames(result), c(
     "source_file", "experiment_id", "well", "treatment", "timepoint",
-    "biological_replicate", "mean_firing_rate_hz", "number_of_bursts"
+    "biological_replicate", "notes", "mean_firing_rate_hz", "number_of_bursts"
   ))
   expect_equal(result$mean_firing_rate_hz, sample_data$mean_firing_rate_hz)
   expect_equal(result$number_of_bursts, sample_data$number_of_bursts)
   expect_true(all(is.na(result$treatment)))
+  expect_true(all(is.na(result$notes)))
+})
+
+test_that("free-text notes are carried through per (source_file, well), untouched", {
+  metadata <- tibble::tibble(
+    source_file = "exp1.csv",
+    well = "A1",
+    notes = "possible contamination, exclude from analysis"
+  )
+
+  result <- apply_metadata(sample_data, metadata)
+
+  expect_equal(
+    result$notes,
+    c("possible contamination, exclude from analysis", NA, NA, NA)
+  )
 })
 
 test_that("metadata assigned to a subset of wells leaves the rest NA", {
@@ -80,6 +97,7 @@ test_that("a metadata column not supplied by the user is added as NA, not an err
   expect_true("timepoint" %in% colnames(result))
   expect_true("biological_replicate" %in% colnames(result))
   expect_true("experiment_id" %in% colnames(result))
+  expect_true("notes" %in% colnames(result))
 })
 
 test_that("duplicate metadata rows for the same well are ambiguous, not silently merged", {

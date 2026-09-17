@@ -127,6 +127,74 @@ test_that("plot_time_course errors when timepoint is entirely NA", {
   )
 })
 
+test_that("plot_time_course_summary draws one mean point per (timepoint, group)", {
+  result <- plot_time_course_summary(time_course_data, "mean_firing_rate_hz", group = "treatment")
+
+  expect_s3_class(result, "ggplot")
+  point_layers <- which(vapply(result$layers, function(l) inherits(l$geom, "GeomPoint"), logical(1)))
+  expect_equal(length(point_layers), 2) # individual wells + per-group means
+
+  raw_points <- ggplot2::layer_data(result, point_layers[[1]])
+  expect_equal(nrow(raw_points), nrow(time_course_data))
+
+  mean_points <- ggplot2::layer_data(result, point_layers[[2]])
+  expect_equal(nrow(mean_points), 4) # 2 timepoints x 2 treatments
+})
+
+test_that("plot_time_course_summary's mean matches a manual calculation", {
+  result <- plot_time_course_summary(time_course_data, "mean_firing_rate_hz", group = "treatment")
+
+  point_layers <- which(vapply(result$layers, function(l) inherits(l$geom, "GeomPoint"), logical(1)))
+  mean_points <- ggplot2::layer_data(result, point_layers[[2]])
+
+  expected_mean <- mean(time_course_data$mean_firing_rate_hz[
+    time_course_data$timepoint == 0 & time_course_data$treatment == "drug_x"
+  ])
+  expect_true(any(abs(mean_points$y - expected_mean) < 1e-9))
+})
+
+test_that("plot_time_course_summary draws one series with no group given", {
+  no_group <- dplyr::select(time_course_data, -treatment)
+  result <- plot_time_course_summary(no_group, "mean_firing_rate_hz")
+
+  expect_s3_class(result, "ggplot")
+  point_layers <- which(vapply(result$layers, function(l) inherits(l$geom, "GeomPoint"), logical(1)))
+  mean_points <- ggplot2::layer_data(result, point_layers[[2]])
+  expect_equal(nrow(mean_points), 2) # 2 timepoints, 1 series
+})
+
+test_that("plot_time_course_summary errors when there is no timepoint column", {
+  no_timepoint <- dplyr::select(time_course_data, -timepoint)
+
+  expect_error(
+    plot_time_course_summary(no_timepoint, "mean_firing_rate_hz"),
+    class = "mea_missing_columns"
+  )
+})
+
+test_that("plot_time_course_summary errors when timepoint is entirely NA", {
+  all_na_timepoint <- time_course_data
+  all_na_timepoint$timepoint <- NA_real_
+
+  expect_error(
+    plot_time_course_summary(all_na_timepoint, "mean_firing_rate_hz"),
+    "no timepoint metadata",
+    class = "mea_missing_timepoint"
+  )
+})
+
+test_that("plot_time_course_summary errors on a non-numeric timepoint value", {
+  bad_timepoint <- time_course_data
+  bad_timepoint$timepoint <- as.character(bad_timepoint$timepoint)
+  bad_timepoint$timepoint[1] <- "forty"
+
+  expect_error(
+    plot_time_course_summary(bad_timepoint, "mean_firing_rate_hz"),
+    "could not interpret timepoint",
+    class = "mea_invalid_timepoint"
+  )
+})
+
 test_that("plot_plate_heatmap draws one tile per well", {
   plate_data <- tibble::tibble(
     well = c("A1", "A2", "B1", "B2"),
