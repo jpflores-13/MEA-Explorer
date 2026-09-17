@@ -97,3 +97,72 @@ test_that("errors when required columns are missing", {
     class = "mea_missing_columns"
   )
 })
+
+test_that("pivot_summary_for_prism gives mean/sd/n columns, matching summarize_mea", {
+  result <- pivot_summary_for_prism(single_group_data, "mean_firing_rate_hz")
+
+  expect_equal(colnames(result), c("timepoint", "mean", "sd", "n"))
+  expect_equal(result$timepoint, c(20, 22, 24))
+  expect_equal(result$n, c(2, 2, 2))
+  expect_equal(result$mean, c(mean(c(0.01, 0.05)), mean(c(0.02, 0.06)), mean(c(0.03, 0.07))))
+  expect_equal(result$sd, c(sd(c(0.01, 0.05)), sd(c(0.02, 0.06)), sd(c(0.03, 0.07))))
+})
+
+test_that("pivot_summary_for_prism does not disambiguate columns with only one group value", {
+  one_group <- dplyr::mutate(single_group_data, treatment = "control")
+  result <- pivot_summary_for_prism(one_group, "mean_firing_rate_hz", group = "treatment")
+
+  expect_equal(colnames(result), c("timepoint", "mean", "sd", "n"))
+})
+
+test_that("pivot_summary_for_prism gives a mean/sd/n trio per group when multiple groups are present", {
+  result <- pivot_summary_for_prism(two_group_data, "mean_firing_rate_hz", group = "treatment")
+
+  expect_equal(
+    sort(colnames(result)),
+    sort(c("timepoint", "ASD mean", "ASD sd", "ASD n", "Control mean", "Control sd", "Control n"))
+  )
+  expect_equal(result$timepoint, c(20, 22))
+  expect_equal(result[["ASD mean"]], c(0.01, 0.02))
+  expect_equal(result[["ASD n"]], c(1, 1))
+  expect_equal(result[["Control mean"]], c(0.05, 0.06))
+})
+
+test_that("pivot_summary_for_prism gives n = 0 (not NA) for a group missing at a timepoint", {
+  # ASD only has a well at timepoint 20; Control only at 22.
+  sparse_groups <- tibble::tibble(
+    well = c("A1", "A2"),
+    treatment = c("ASD", "Control"),
+    timepoint = c(20, 22),
+    mean_firing_rate_hz = c(0.01, 0.05)
+  )
+
+  result <- pivot_summary_for_prism(sparse_groups, "mean_firing_rate_hz", group = "treatment")
+
+  expect_equal(result[["ASD n"]], c(1, 0))
+  expect_true(is.na(result[["ASD mean"]][result$timepoint == 22]))
+  expect_equal(result[["Control n"]], c(0, 1))
+})
+
+test_that("pivot_summary_for_prism errors when no timepoint is assigned at all", {
+  all_na <- single_group_data
+  all_na$timepoint <- NA_real_
+
+  expect_error(
+    pivot_summary_for_prism(all_na, "mean_firing_rate_hz"),
+    "no timepoint metadata",
+    class = "mea_missing_timepoint"
+  )
+})
+
+test_that("pivot_summary_for_prism errors on a non-numeric timepoint value", {
+  bad <- single_group_data
+  bad$timepoint <- as.character(bad$timepoint)
+  bad$timepoint[1] <- "twenty"
+
+  expect_error(
+    pivot_summary_for_prism(bad, "mean_firing_rate_hz"),
+    "could not interpret timepoint",
+    class = "mea_invalid_timepoint"
+  )
+})

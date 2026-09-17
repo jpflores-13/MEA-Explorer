@@ -124,7 +124,8 @@ ui <- page_sidebar(
       uiOutput("timecourse_caption"),
       plotOutput("timecourse_plot", height = "360px"),
       layout_columns(
-        downloadButton("download_prism", "Export data (Prism format, .csv)", class = "btn-outline-primary w-100"),
+        downloadButton("download_prism", "Export replicates (Prism, .csv)", class = "btn-outline-primary w-100"),
+        downloadButton("download_prism_summary", "Export Mean/SD/N (Prism, .csv)", class = "btn-outline-primary w-100"),
         div(
           radioButtons(
             "timecourse_format", "Figure format",
@@ -502,11 +503,24 @@ server <- function(input, output, session) {
   )
 
   output$download_prism <- downloadHandler(
-    filename = function() "mea_explorer_timecourse_prism.csv",
+    filename = function() "mea_explorer_timecourse_prism_replicates.csv",
     content = function(file) {
       data <- timecourse_data() |>
         dplyr::rename(value = dplyr::all_of(input$metric))
       out <- pivot_wide_for_prism(data, "value", group = if (has_group()) "treatment" else NULL)
+      readr::write_csv(out, file)
+    }
+  )
+
+  # For Prism's "Enter and plot error values calculated elsewhere ->
+  # Mean, SD, N" table format, which wants precomputed statistics per
+  # timepoint rather than one column per replicate.
+  output$download_prism_summary <- downloadHandler(
+    filename = function() "mea_explorer_timecourse_prism_summary.csv",
+    content = function(file) {
+      data <- timecourse_data() |>
+        dplyr::rename(value = dplyr::all_of(input$metric))
+      out <- pivot_summary_for_prism(data, "value", group = if (has_group()) "treatment" else NULL)
       readr::write_csv(out, file)
     }
   )
