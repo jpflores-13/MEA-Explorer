@@ -71,11 +71,4 @@ MEA-Explorer/
 ├── tests/testthat/       # unit tests + synthetic fixture CSVs
 ├── example_data/         # a real (de-identified metadata) Axion export
 ├── DATA_SPEC.md          # supported CSV format, in detail
-└── CLAUDE.md             # engineering/scientific guardrails for this repo
 ```
-
-## Priorities
-
-Data integrity > scientific correctness > reproducibility > testability >
-maintainability > user experience > performance. See
-[CLAUDE.md](CLAUDE.md) for what that means in practice.
