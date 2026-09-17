@@ -51,9 +51,22 @@ file_input_key <- function(source_file) {
 
 # First color is #FF54A9 — not a guess: it's the exact "Well Coloring"
 # hex Axion/AxIS itself assigns and Prism inherits (see any export's
-# header), so this matches what clients already see in Prism. Later
-# colors stay clearly distinct for additional conditions.
+# header), so this matches what clients already see in Prism. The next
+# few stay clearly distinct for a handful of real conditions.
 CONDITION_PALETTE <- c("#FF54A9", "#111111", "#0B6E63", "#E69F00", "#3C79B5", "#7B4EA3")
+
+# Real filenames are inconsistent enough (typos, stray leading
+# underscores/digits, reordered tokens) that infer_condition_label() can
+# turn what's really one condition into several near-duplicate labels —
+# so the number of "conditions" a researcher ends up with isn't bounded
+# by CONDITION_PALETTE's length. Never let running out of fixed colors
+# error out the plot: extend with evenly-spaced hues past the fixed set.
+condition_colors <- function(n) {
+  if (n <= length(CONDITION_PALETTE)) return(CONDITION_PALETTE[seq_len(n)])
+  n_extra <- n - length(CONDITION_PALETTE)
+  extra <- grDevices::hcl(h = seq(15, 375, length.out = n_extra + 1)[seq_len(n_extra)], c = 100, l = 55)
+  c(CONDITION_PALETTE, extra)
+}
 
 ui <- page_sidebar(
   title = "MEA Explorer — Upload",
@@ -428,12 +441,18 @@ server <- function(input, output, session) {
     }
     data <- timecourse_data()
     n_wells <- length(unique(paste(data$source_file, data$well)))
-    p(
-      class = "text-muted",
-      sprintf(
-        "n = %d well-recording%s · %s",
-        n_wells, if (n_wells == 1) "" else "s",
-        names(METRIC_CHOICES)[METRIC_CHOICES == input$metric]
+    tagList(
+      p(
+        class = "text-muted mb-0",
+        sprintf(
+          "n = %d well-recording%s · %s",
+          n_wells, if (n_wells == 1) "" else "s",
+          names(METRIC_CHOICES)[METRIC_CHOICES == input$metric]
+        )
+      ),
+      p(
+        class = "text-muted small",
+        "Faint dots = individual wells · bold dot/line = mean ± SEM across included wells."
       )
     )
   })
@@ -459,7 +478,8 @@ server <- function(input, output, session) {
       )
 
     if (has_group()) {
-      p <- p + ggplot2::scale_color_manual(values = CONDITION_PALETTE)
+      n_conditions <- length(unique(timecourse_data()$treatment[!is.na(timecourse_data()$treatment)]))
+      p <- p + ggplot2::scale_color_manual(values = condition_colors(n_conditions))
     }
     p
   })
