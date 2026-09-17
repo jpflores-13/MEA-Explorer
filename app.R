@@ -49,9 +49,11 @@ file_input_key <- function(source_file) {
   }, character(1)))
 }
 
-# First color matches the vivid pink/magenta clients recreate in Prism;
-# later colors stay clearly distinct for additional conditions.
-CONDITION_PALETTE <- c("#E6299B", "#111111", "#0B6E63", "#E69F00", "#3C79B5", "#7B4EA3")
+# First color is #FF54A9 — not a guess: it's the exact "Well Coloring"
+# hex Axion/AxIS itself assigns and Prism inherits (see any export's
+# header), so this matches what clients already see in Prism. Later
+# colors stay clearly distinct for additional conditions.
+CONDITION_PALETTE <- c("#FF54A9", "#111111", "#0B6E63", "#E69F00", "#3C79B5", "#7B4EA3")
 
 ui <- page_sidebar(
   title = "MEA Explorer — Upload",
