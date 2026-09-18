@@ -68,6 +68,60 @@ condition_colors <- function(n) {
   c(CONDITION_PALETTE, extra)
 }
 
+#' A light- or dark-background theme layer for exported figures
+#'
+#' Applied on top of each plot's own theme_minimal()/bold-text styling,
+#' so it only needs to touch background fills and (for dark) flip text/
+#' gridline/axis-line color to stay legible — face="bold" etc. set
+#' earlier is inherited through, not reset, since this never sets those
+#' properties directly.
+#' @keywords internal
+plot_background_theme <- function(dark) {
+  if (!dark) {
+    return(ggplot2::theme(
+      plot.background = ggplot2::element_rect(fill = "white", color = NA),
+      panel.background = ggplot2::element_rect(fill = "white", color = NA),
+      legend.background = ggplot2::element_rect(fill = "white", color = NA),
+      legend.key = ggplot2::element_rect(fill = "white", color = NA)
+    ))
+  }
+
+  ggplot2::theme(
+    plot.background = ggplot2::element_rect(fill = "black", color = NA),
+    panel.background = ggplot2::element_rect(fill = "black", color = NA),
+    panel.grid = ggplot2::element_line(color = "grey25"),
+    legend.background = ggplot2::element_rect(fill = "black", color = NA),
+    legend.key = ggplot2::element_rect(fill = "black", color = NA),
+    text = ggplot2::element_text(color = "white"),
+    axis.line = ggplot2::element_line(color = "white"),
+    axis.ticks = ggplot2::element_line(color = "white")
+  )
+}
+
+#' Force point/line/errorbar geoms to white when they have no color
+#' aesthetic mapped, so they don't render invisibly-black on a dark
+#' background
+#'
+#' theme() can't fix this — a geom with no `color` in its (or the plot's)
+#' mapping falls back to ggplot2's own default (black), which a dark
+#' background swallows completely. Layers that DO map color (e.g. by
+#' condition) are left untouched, since their own color scale already
+#' handles visibility.
+#' @keywords internal
+force_geom_color_if_dark <- function(p, dark) {
+  if (!dark) return(p)
+  has_global_color <- !is.null(p$mapping$colour)
+
+  for (i in seq_along(p$layers)) {
+    layer <- p$layers[[i]]
+    if (has_global_color || !is.null(layer$mapping$colour)) next
+    if (inherits(layer$geom, c("GeomPoint", "GeomLine", "GeomErrorbar"))) {
+      p$layers[[i]]$aes_params$colour <- "white"
+    }
+  }
+  p
+}
+
 ui <- page_sidebar(
   title = "MEA Explorer — Upload",
   theme = theme,
@@ -109,6 +163,11 @@ ui <- page_sidebar(
             choices = c("PNG" = "png", "PDF" = "pdf", "SVG" = "svg"),
             selected = "png", inline = TRUE
           ),
+          radioButtons(
+            "plot_background", "Background",
+            choices = c("White" = "light", "Black" = "dark"),
+            selected = "light", inline = TRUE
+          ),
           downloadButton("download_plot", "Export figure", class = "btn-outline-primary w-100")
         )
       )
@@ -131,6 +190,11 @@ ui <- page_sidebar(
             "timecourse_format", "Figure format",
             choices = c("PNG" = "png", "PDF" = "pdf", "SVG" = "svg"),
             selected = "png", inline = TRUE
+          ),
+          radioButtons(
+            "timecourse_background", "Background",
+            choices = c("White" = "light", "Black" = "dark"),
+            selected = "light", inline = TRUE
           ),
           downloadButton("download_timecourse_plot", "Export figure", class = "btn-outline-primary w-100")
         )
@@ -281,17 +345,21 @@ server <- function(input, output, session) {
 
     p <- plot_well_values(filtered(), "value") +
       ggplot2::labs(x = "Well", y = metric_label) +
-      ggplot2::theme_minimal(base_size = 13)
+      ggplot2::theme_minimal(base_size = 13) +
+      plot_background_theme(dark = identical(input$plot_background, "dark"))
 
     # Distinguish same-named wells from different files rather than
     # conflating two different wells' worth of data at one x position.
     if (length(unique(filtered()$source_file)) > 1) {
       p <- p + ggplot2::facet_wrap(~source_file)
     }
-    p
+    force_geom_color_if_dark(p, dark = identical(input$plot_background, "dark"))
   })
 
-  output$plot <- renderPlot(plot_obj())
+  output$plot <- renderPlot(
+    plot_obj(),
+    bg = "transparent"
+  )
 
   # ggsave()'s svg device needs svglite; checked explicitly (rather than
   # left to ggsave's internal requireNamespace) so it's both a clear error
@@ -309,10 +377,11 @@ server <- function(input, output, session) {
     filename = function() sprintf("mea_explorer_figure.%s", input$plot_format),
     content = function(file) {
       require_svglite_if_needed(input$plot_format)
+      bg <- if (identical(input$plot_background, "dark")) "black" else "white"
       ggplot2::ggsave(
         file, plot = plot_obj(),
         width = 7, height = 5, units = "in", dpi = 300,
-        device = input$plot_format
+        device = input$plot_format, bg = bg
       )
     }
   )
@@ -395,6 +464,7 @@ server <- function(input, output, session) {
         class = "d-flex justify-content-between align-items-center mt-1",
         tags$label("Include conditions", class = "control-label mb-0", `for` = "conditions"),
         div(
+          actionLink("normalize_conditions", "Normalize conditions", class = "small me-2"),
           actionLink("conditions_select_all", "Select all", class = "small me-2"),
           actionLink("conditions_select_none", "Clear", class = "small")
         )
@@ -411,6 +481,77 @@ server <- function(input, output, session) {
   observeEvent(input$conditions_select_none, {
     conditions <- available_conditions()
     updateCheckboxGroupInput(session, "conditions", choices = conditions, selected = character(0), inline = TRUE)
+  })
+
+  # One condition label per file (not per well/row), for frequency-aware
+  # grouping — the most common spelling in a group becomes the suggested
+  # canonical one. See group_condition_labels()/normalize_condition_key()
+  # (R/upload.R) for what does and doesn't get grouped automatically.
+  condition_labels_per_file <- reactive({
+    dplyr::distinct(data_with_metadata(), source_file, treatment)$treatment
+  })
+
+  condition_groups <- reactive({
+    group_condition_labels(condition_labels_per_file())
+  })
+
+  # Snapshot the groups shown in the modal so a later Apply click acts on
+  # exactly what the researcher reviewed, even if the underlying data
+  # changes in between.
+  pending_normalize_groups <- reactiveVal(list())
+
+  observeEvent(input$normalize_conditions, {
+    groups <- condition_groups()
+    pending_normalize_groups(groups)
+
+    showModal(modalDialog(
+      title = "Normalize condition labels",
+      if (length(groups) == 0) {
+        p("No near-duplicate condition labels found — nothing to normalize.")
+      } else {
+        tagList(
+          p(
+            class = "text-muted",
+            "These look like the same condition once case, spacing, punctuation, and word order are ignored. Review the canonical spelling below (edit if needed), then apply."
+          ),
+          lapply(seq_along(groups), function(i) {
+            g <- groups[[i]]
+            div(
+              class = "mb-3 pb-3 border-bottom",
+              checkboxInput(
+                paste0("normalize_include_", i),
+                label = paste(g$labels, collapse = "  •  "),
+                value = TRUE
+              ),
+              textInput(paste0("normalize_canonical_", i), "Merge into:", value = g$suggested)
+            )
+          })
+        )
+      },
+      footer = tagList(
+        modalButton("Cancel"),
+        if (length(groups) > 0) actionButton("normalize_apply", "Apply", class = "btn-primary")
+      ),
+      easyClose = TRUE
+    ))
+  })
+
+  observeEvent(input$normalize_apply, {
+    groups <- pending_normalize_groups()
+    file_treatment <- dplyr::distinct(data_with_metadata(), source_file, treatment)
+
+    for (i in seq_along(groups)) {
+      if (!isTRUE(input[[paste0("normalize_include_", i)]])) next
+      canonical <- input[[paste0("normalize_canonical_", i)]]
+      if (is.null(canonical) || !nzchar(canonical)) next
+
+      affected_files <- file_treatment$source_file[file_treatment$treatment %in% groups[[i]]$labels]
+      for (f in affected_files) {
+        updateTextInput(session, paste0("treatment_", file_input_key(f)), value = canonical)
+      }
+    }
+
+    removeModal()
   })
 
   timecourse_data <- reactive({
@@ -476,28 +617,33 @@ server <- function(input, output, session) {
         axis.title = ggplot2::element_text(face = "bold"),
         axis.text = ggplot2::element_text(face = "bold"),
         legend.title = ggplot2::element_text(face = "bold")
-      )
+      ) +
+      plot_background_theme(dark = identical(input$timecourse_background, "dark"))
 
     if (has_group()) {
       n_conditions <- length(unique(timecourse_data()$treatment[!is.na(timecourse_data()$treatment)]))
       p <- p + ggplot2::scale_color_manual(values = condition_colors(n_conditions))
     }
-    p
+    force_geom_color_if_dark(p, dark = identical(input$timecourse_background, "dark"))
   })
 
-  output$timecourse_plot <- renderPlot({
-    req(has_timepoint())
-    timecourse_plot_obj()
-  })
+  output$timecourse_plot <- renderPlot(
+    {
+      req(has_timepoint())
+      timecourse_plot_obj()
+    },
+    bg = "transparent"
+  )
 
   output$download_timecourse_plot <- downloadHandler(
     filename = function() sprintf("mea_explorer_timecourse.%s", input$timecourse_format),
     content = function(file) {
       require_svglite_if_needed(input$timecourse_format)
+      bg <- if (identical(input$timecourse_background, "dark")) "black" else "white"
       ggplot2::ggsave(
         file, plot = timecourse_plot_obj(),
         width = 7, height = 5, units = "in", dpi = 300,
-        device = input$timecourse_format
+        device = input$timecourse_format, bg = bg
       )
     }
   )

@@ -155,3 +155,55 @@ infer_condition_label <- function(recording_name) {
 
   if (!nzchar(x)) NA_character_ else x
 }
+
+#' Normalize a condition label for grouping near-duplicates
+#'
+#' Used only to detect whether two condition labels are "the same modulo
+#' formatting" — never as a label to display or apply. Strips a leading
+#' non-alphanumeric character (e.g. a stray "_" left over from a
+#' filename date separator), case-folds, collapses whitespace, and sorts
+#' tokens so word order doesn't matter (e.g. "KOLF EGC BUMP" and "KOLF
+#' BUMP EGC" normalize to the same key).
+#'
+#' Deliberately does NOT fix typos or merge tokens: "BUMPM" stays a
+#' different token from "BUMP", and "KOLFEGC" (no space) stays different
+#' from "KOLF EGC" — those need a human to confirm, since correcting them
+#' automatically means guessing intent, which MEA Explorer never does
+#' silently (see CLAUDE.md).
+#'
+#' @param label A condition/treatment label string.
+#' @return A normalized character key, not meant to be shown to a
+#'   researcher.
+#' @keywords internal
+normalize_condition_key <- function(label) {
+  x <- toupper(trimws(label))
+  x <- sub("^[^A-Z0-9]+", "", x)
+  x <- gsub("\\s+", " ", trimws(x))
+  tokens <- sort(strsplit(x, " ", fixed = TRUE)[[1]])
+  paste(tokens, collapse = " ")
+}
+
+#' Group condition labels that are the same modulo formatting
+#'
+#' @param labels Character vector of raw condition labels, one per file
+#'   (repeats expected/used to determine the most common spelling).
+#' @return A list of groups, each `list(labels = <distinct raw labels,
+#'   most-frequent first>, suggested = <the most frequent one>)`. Only
+#'   groups with more than one distinct raw label are returned — an
+#'   already-unique label needs no merging and is omitted.
+#' @keywords internal
+group_condition_labels <- function(labels) {
+  labels <- labels[!is.na(labels) & nzchar(labels)]
+  if (length(labels) == 0) return(list())
+
+  freq <- table(labels)
+  distinct_labels <- names(freq)
+  keys <- vapply(distinct_labels, normalize_condition_key, character(1))
+  by_key <- split(distinct_labels, keys)
+  by_key <- by_key[lengths(by_key) > 1]
+
+  lapply(by_key, function(group_labels) {
+    ordered <- group_labels[order(-freq[group_labels])]
+    list(labels = unname(ordered), suggested = unname(ordered[[1]]))
+  })
+}

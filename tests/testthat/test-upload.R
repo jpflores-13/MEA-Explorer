@@ -123,6 +123,54 @@ test_that("infer_condition_label leaves a recording name with no leading date un
   expect_equal(infer_condition_label("Synthetic Valid Export"), "Synthetic Valid Export")
 })
 
+test_that("normalize_condition_key ignores case, whitespace, and token order", {
+  expect_equal(normalize_condition_key("KOLF EGC BUMP"), normalize_condition_key("kolf  bump   egc"))
+  expect_equal(normalize_condition_key("KOLF EGC BUMP"), normalize_condition_key("_KOLF EGC BUMP"))
+  expect_equal(normalize_condition_key("KOLF EGC BUMP"), normalize_condition_key(" KOLF EGC BUMP "))
+})
+
+test_that("normalize_condition_key does not merge a genuine typo or a missing space", {
+  expect_false(identical(normalize_condition_key("KOLF EGC BUMP"), normalize_condition_key("KOLF BUMPM EGC")))
+  expect_false(identical(normalize_condition_key("KOLF EGC BUMP"), normalize_condition_key("KOLFEGC BUMP")))
+  expect_false(identical(normalize_condition_key("KOLF EGC BUMP"), normalize_condition_key("KOLF EGC")))
+})
+
+test_that("group_condition_labels groups the real 8-condition case from a messy 20-file batch", {
+  # Frequencies roughly matching the actual session: most files say
+  # "KOLF EGC BUMP" or an order/underscore variant of it; a handful are
+  # genuinely distinct (typo, missing token, missing space).
+  labels <- c(
+    rep("KOLF EGC BUMP", 14),
+    rep("KOLF BUMP EGC", 2),
+    "_KOLF EGC BUMP",
+    "_KOLF BUMP EGC",
+    "KOLF BUMPM EGC",
+    "KOLFEGC BUMP",
+    "KOLF EGC"
+  )
+
+  groups <- group_condition_labels(labels)
+
+  expect_equal(length(groups), 1)
+  merge_group <- groups[[1]]
+  expect_equal(
+    sort(merge_group$labels),
+    sort(c("KOLF EGC BUMP", "KOLF BUMP EGC", "_KOLF EGC BUMP", "_KOLF BUMP EGC"))
+  )
+  expect_equal(merge_group$suggested, "KOLF EGC BUMP") # most frequent
+})
+
+test_that("group_condition_labels omits already-unique labels and NA/blank entries", {
+  labels <- c("KOLF EGC BUMP", "ASD line", NA_character_, "")
+  expect_equal(length(group_condition_labels(labels)), 0)
+})
+
+test_that("group_condition_labels suggests whichever spelling is most frequent", {
+  labels <- c("kolf egc bump", "kolf egc bump", "KOLF EGC BUMP")
+  groups <- group_condition_labels(labels)
+  expect_equal(groups[[1]]$suggested, "kolf egc bump")
+})
+
 test_that("mismatched paths and display_names raises an informative error", {
   expect_error(
     read_axion_mea_report(
