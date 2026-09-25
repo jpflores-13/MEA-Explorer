@@ -122,6 +122,49 @@ force_geom_color_if_dark <- function(p, dark) {
   p
 }
 
+#' A compact 4-field (X min/max, Y min/max) axis-limit control block
+#'
+#' Blank (the default) means auto-scale on that bound; a filled-in value
+#' pins it (e.g. matching a reference figure's fixed Y range) while the
+#' other bound stays auto if left blank.
+#' @keywords internal
+axis_limit_controls <- function(prefix) {
+  div(
+    class = "mb-2",
+    tags$label("Axis limits (blank = auto)", class = "control-label small mb-1"),
+    layout_columns(
+      col_widths = c(3, 3, 3, 3),
+      numericInput(paste0(prefix, "_xmin"), "X min", value = NA),
+      numericInput(paste0(prefix, "_xmax"), "X max", value = NA),
+      numericInput(paste0(prefix, "_ymin"), "Y min", value = NA),
+      numericInput(paste0(prefix, "_ymax"), "Y max", value = NA)
+    )
+  )
+}
+
+#' Apply optional X/Y axis limits to a plot, zooming rather than
+#' dropping/recomputing data outside the range (so an error bar that
+#' partly extends past a fixed limit is clipped visually, not silently
+#' excluded from the statistics it's showing)
+#' @keywords internal
+apply_axis_limits <- function(p, xmin, xmax, ymin, ymax) {
+  p + ggplot2::coord_cartesian(xlim = c(xmin, xmax), ylim = c(ymin, ymax))
+}
+
+#' Shared figure styling (base size, bold title/axis/legend text) for
+#' every plot in the app, so the Wells and Time course tabs always
+#' render visually consistent figures
+#' @keywords internal
+bold_plot_theme <- function() {
+  ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold"),
+      axis.title = ggplot2::element_text(face = "bold"),
+      axis.text = ggplot2::element_text(face = "bold"),
+      legend.title = ggplot2::element_text(face = "bold")
+    )
+}
+
 ui <- page_sidebar(
   title = "MEA Explorer — Upload",
   theme = theme,
@@ -154,7 +197,7 @@ ui <- page_sidebar(
       "Wells",
       uiOutput("caption"),
       plotOutput("plot", height = "360px"),
-      tableOutput("table"),
+      axis_limit_controls("plot"),
       layout_columns(
         downloadButton("download", "Export selection (.csv)", class = "btn-outline-primary w-100"),
         div(
@@ -170,7 +213,8 @@ ui <- page_sidebar(
           ),
           downloadButton("download_plot", "Export figure", class = "btn-outline-primary w-100")
         )
-      )
+      ),
+      tableOutput("table")
     ),
     nav_panel(
       "Time course",
@@ -182,6 +226,7 @@ ui <- page_sidebar(
       uiOutput("condition_filter"),
       uiOutput("timecourse_caption"),
       plotOutput("timecourse_plot", height = "360px"),
+      axis_limit_controls("timecourse"),
       layout_columns(
         downloadButton("download_prism", "Export replicates (Prism, .csv)", class = "btn-outline-primary w-100"),
         downloadButton("download_prism_summary", "Export Mean/SD/N (Prism, .csv)", class = "btn-outline-primary w-100"),
@@ -344,8 +389,8 @@ server <- function(input, output, session) {
     metric_label <- names(METRIC_CHOICES)[METRIC_CHOICES == input$metric]
 
     p <- plot_well_values(filtered(), "value") +
-      ggplot2::labs(x = "Well", y = metric_label) +
-      ggplot2::theme_minimal(base_size = 13) +
+      ggplot2::labs(title = metric_label, x = "Well", y = metric_label) +
+      bold_plot_theme() +
       plot_background_theme(dark = identical(input$plot_background, "dark"))
 
     # Distinguish same-named wells from different files rather than
@@ -353,6 +398,7 @@ server <- function(input, output, session) {
     if (length(unique(filtered()$source_file)) > 1) {
       p <- p + ggplot2::facet_wrap(~source_file)
     }
+    p <- apply_axis_limits(p, input$plot_xmin, input$plot_xmax, input$plot_ymin, input$plot_ymax)
     force_geom_color_if_dark(p, dark = identical(input$plot_background, "dark"))
   })
 
@@ -611,19 +657,14 @@ server <- function(input, output, session) {
         title = paste("Avg", metric_label), x = "Days in culture",
         y = metric_label, color = "Condition"
       ) +
-      ggplot2::theme_minimal(base_size = 14) +
-      ggplot2::theme(
-        plot.title = ggplot2::element_text(face = "bold"),
-        axis.title = ggplot2::element_text(face = "bold"),
-        axis.text = ggplot2::element_text(face = "bold"),
-        legend.title = ggplot2::element_text(face = "bold")
-      ) +
+      bold_plot_theme() +
       plot_background_theme(dark = identical(input$timecourse_background, "dark"))
 
     if (has_group()) {
       n_conditions <- length(unique(timecourse_data()$treatment[!is.na(timecourse_data()$treatment)]))
       p <- p + ggplot2::scale_color_manual(values = condition_colors(n_conditions))
     }
+    p <- apply_axis_limits(p, input$timecourse_xmin, input$timecourse_xmax, input$timecourse_ymin, input$timecourse_ymax)
     force_geom_color_if_dark(p, dark = identical(input$timecourse_background, "dark"))
   })
 
