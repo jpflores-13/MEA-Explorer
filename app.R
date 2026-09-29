@@ -41,6 +41,42 @@ theme <- bs_theme(
   )
 )
 
+# Safari's Service Worker does not reliably intercept the request a
+# browser makes when a user clicks an <a download> link — it can fall
+# through to the network instead, which 404s (there's no real server;
+# shinylive's whole download/*/... path only exists inside the service
+# worker) and GitHub Pages returns its HTML 404 page, downloaded as if
+# it were the CSV. A plain fetch() to the same URL *is* reliably
+# intercepted in every browser (verified repeatedly against the live
+# site), so this replaces the native click-to-download behavior with
+# fetch-the-bytes-ourselves-then-save-via-a-blob-URL, which never
+# depends on that fragile interception path at all.
+DOWNLOAD_FIX_SCRIPT <- "
+document.addEventListener('click', function (e) {
+  var link = e.target.closest('a.shiny-download-link');
+  if (!link) return;
+  e.preventDefault();
+
+  fetch(link.href).then(function (res) {
+    var disposition = res.headers.get('Content-Disposition') || '';
+    var match = disposition.match(/filename\\*?=(?:UTF-8'')?\"?([^\";]+)\"?/i);
+    var filename = match ? decodeURIComponent(match[1]) : (link.getAttribute('download') || 'download');
+    return res.blob().then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    });
+  }).catch(function (err) {
+    console.error('MEA Explorer: download failed', err);
+  });
+}, true);
+"
+
 # A downloadHandler needs a stable, syntactically-safe key per uploaded
 # file to name its dynamic treatment_*/timepoint_* inputs.
 file_input_key <- function(source_file) {
@@ -168,6 +204,7 @@ bold_plot_theme <- function() {
 ui <- page_sidebar(
   title = "MEA Explorer — Upload",
   theme = theme,
+  tags$script(HTML(DOWNLOAD_FIX_SCRIPT)),
   sidebar = sidebar(
     width = 320,
     fileInput(
@@ -196,24 +233,7 @@ ui <- page_sidebar(
     nav_panel(
       "Wells",
       uiOutput("caption"),
-      plotOutput("plot", height = "360px"),
-      axis_limit_controls("plot"),
-      layout_columns(
-        downloadButton("download", "Export selection (.csv)", class = "btn-outline-primary w-100"),
-        div(
-          radioButtons(
-            "plot_format", "Figure format",
-            choices = c("PNG" = "png", "PDF" = "pdf", "SVG" = "svg"),
-            selected = "png", inline = TRUE
-          ),
-          radioButtons(
-            "plot_background", "Background",
-            choices = c("White" = "light", "Black" = "dark"),
-            selected = "light", inline = TRUE
-          ),
-          downloadButton("download_plot", "Export figure", class = "btn-outline-primary w-100")
-        )
-      ),
+      downloadButton("download", "Export selection (.csv)", class = "btn-outline-primary w-100 mt-2 mb-3"),
       tableOutput("table")
     ),
     nav_panel(
@@ -382,31 +402,6 @@ server <- function(input, output, session) {
     }
   )
 
-  # plot_well_values() (R/plotting.R) never needs metadata columns, so it
-  # works directly on what Upload has: whichever wells/metric are selected.
-  plot_obj <- reactive({
-    req(nrow(filtered()) > 0)
-    metric_label <- names(METRIC_CHOICES)[METRIC_CHOICES == input$metric]
-
-    p <- plot_well_values(filtered(), "value") +
-      ggplot2::labs(title = metric_label, x = "Well", y = metric_label) +
-      bold_plot_theme() +
-      plot_background_theme(dark = identical(input$plot_background, "dark"))
-
-    # Distinguish same-named wells from different files rather than
-    # conflating two different wells' worth of data at one x position.
-    if (length(unique(filtered()$source_file)) > 1) {
-      p <- p + ggplot2::facet_wrap(~source_file)
-    }
-    p <- apply_axis_limits(p, input$plot_xmin, input$plot_xmax, input$plot_ymin, input$plot_ymax)
-    force_geom_color_if_dark(p, dark = identical(input$plot_background, "dark"))
-  })
-
-  output$plot <- renderPlot(
-    plot_obj(),
-    bg = "transparent"
-  )
-
   # ggsave()'s svg device needs svglite; checked explicitly (rather than
   # left to ggsave's internal requireNamespace) so it's both a clear error
   # and a dependency renv's static scanner can find and snapshot.
@@ -418,19 +413,6 @@ server <- function(input, output, session) {
       ))
     }
   }
-
-  output$download_plot <- downloadHandler(
-    filename = function() sprintf("mea_explorer_figure.%s", input$plot_format),
-    content = function(file) {
-      require_svglite_if_needed(input$plot_format)
-      bg <- if (identical(input$plot_background, "dark")) "black" else "white"
-      ggplot2::ggsave(
-        file, plot = plot_obj(),
-        width = 7, height = 5, units = "in", dpi = 300,
-        device = input$plot_format, bg = bg
-      )
-    }
-  )
 
   # --- Time course tab -------------------------------------------------
   #
@@ -510,7 +492,6 @@ server <- function(input, output, session) {
         class = "d-flex justify-content-between align-items-center mt-1",
         tags$label("Include conditions", class = "control-label mb-0", `for` = "conditions"),
         div(
-          actionLink("normalize_conditions", "Normalize conditions", class = "small me-2"),
           actionLink("conditions_select_all", "Select all", class = "small me-2"),
           actionLink("conditions_select_none", "Clear", class = "small")
         )
@@ -527,77 +508,6 @@ server <- function(input, output, session) {
   observeEvent(input$conditions_select_none, {
     conditions <- available_conditions()
     updateCheckboxGroupInput(session, "conditions", choices = conditions, selected = character(0), inline = TRUE)
-  })
-
-  # One condition label per file (not per well/row), for frequency-aware
-  # grouping — the most common spelling in a group becomes the suggested
-  # canonical one. See group_condition_labels()/normalize_condition_key()
-  # (R/upload.R) for what does and doesn't get grouped automatically.
-  condition_labels_per_file <- reactive({
-    dplyr::distinct(data_with_metadata(), source_file, treatment)$treatment
-  })
-
-  condition_groups <- reactive({
-    group_condition_labels(condition_labels_per_file())
-  })
-
-  # Snapshot the groups shown in the modal so a later Apply click acts on
-  # exactly what the researcher reviewed, even if the underlying data
-  # changes in between.
-  pending_normalize_groups <- reactiveVal(list())
-
-  observeEvent(input$normalize_conditions, {
-    groups <- condition_groups()
-    pending_normalize_groups(groups)
-
-    showModal(modalDialog(
-      title = "Normalize condition labels",
-      if (length(groups) == 0) {
-        p("No near-duplicate condition labels found — nothing to normalize.")
-      } else {
-        tagList(
-          p(
-            class = "text-muted",
-            "These look like the same condition once case, spacing, punctuation, and word order are ignored. Review the canonical spelling below (edit if needed), then apply."
-          ),
-          lapply(seq_along(groups), function(i) {
-            g <- groups[[i]]
-            div(
-              class = "mb-3 pb-3 border-bottom",
-              checkboxInput(
-                paste0("normalize_include_", i),
-                label = paste(g$labels, collapse = "  •  "),
-                value = TRUE
-              ),
-              textInput(paste0("normalize_canonical_", i), "Merge into:", value = g$suggested)
-            )
-          })
-        )
-      },
-      footer = tagList(
-        modalButton("Cancel"),
-        if (length(groups) > 0) actionButton("normalize_apply", "Apply", class = "btn-primary")
-      ),
-      easyClose = TRUE
-    ))
-  })
-
-  observeEvent(input$normalize_apply, {
-    groups <- pending_normalize_groups()
-    file_treatment <- dplyr::distinct(data_with_metadata(), source_file, treatment)
-
-    for (i in seq_along(groups)) {
-      if (!isTRUE(input[[paste0("normalize_include_", i)]])) next
-      canonical <- input[[paste0("normalize_canonical_", i)]]
-      if (is.null(canonical) || !nzchar(canonical)) next
-
-      affected_files <- file_treatment$source_file[file_treatment$treatment %in% groups[[i]]$labels]
-      for (f in affected_files) {
-        updateTextInput(session, paste0("treatment_", file_input_key(f)), value = canonical)
-      }
-    }
-
-    removeModal()
   })
 
   timecourse_data <- reactive({
@@ -649,6 +559,9 @@ server <- function(input, output, session) {
     req(has_timepoint())
     metric_label <- names(METRIC_CHOICES)[METRIC_CHOICES == input$metric]
 
+    day_values <- suppressWarnings(as.numeric(timecourse_data()$timepoint))
+    day_breaks <- sort(unique(day_values[!is.na(day_values)]))
+
     p <- plot_time_course_summary(
       timecourse_data(), input$metric,
       group = if (has_group()) "treatment" else NULL
@@ -657,6 +570,7 @@ server <- function(input, output, session) {
         title = paste("Avg", metric_label), x = "Days in culture",
         y = metric_label, color = "Condition"
       ) +
+      ggplot2::scale_x_continuous(breaks = day_breaks) +
       bold_plot_theme() +
       plot_background_theme(dark = identical(input$timecourse_background, "dark"))
 
