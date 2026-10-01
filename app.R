@@ -51,6 +51,17 @@ theme <- bs_theme(
 # site), so this replaces the native click-to-download behavior with
 # fetch-the-bytes-ourselves-then-save-via-a-blob-URL, which never
 # depends on that fragile interception path at all.
+#
+# Safari has a second, separate quirk on top of that: even with a
+# correct blob URL and `download` attribute, Safari will sometimes
+# render a blob whose type is text/csv (or image/png) inline in the tab
+# instead of honoring `download` and prompting a save — the file
+# "doesn't download" because Safari just navigated to it as a page. The
+# fix (the same one FileSaver.js-style libraries use) is to re-wrap the
+# fetched bytes in a Blob with a generic application/octet-stream type
+# before creating the object URL — the bytes and filename are unchanged,
+# but a type Safari has no inline viewer for is one it will always offer
+# to save instead of display.
 DOWNLOAD_FIX_SCRIPT <- "
 document.addEventListener('click', function (e) {
   var link = e.target.closest('a.shiny-download-link');
@@ -62,7 +73,8 @@ document.addEventListener('click', function (e) {
     var match = disposition.match(/filename\\*?=(?:UTF-8'')?\"?([^\";]+)\"?/i);
     var filename = match ? decodeURIComponent(match[1]) : (link.getAttribute('download') || 'download');
     return res.blob().then(function (blob) {
-      var url = URL.createObjectURL(blob);
+      var forcedBlob = new Blob([blob], { type: 'application/octet-stream' });
+      var url = URL.createObjectURL(forcedBlob);
       var a = document.createElement('a');
       a.href = url;
       a.download = filename;
